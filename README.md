@@ -1,5 +1,5 @@
 # Aircraft Engine Predictive Maintenance
-CS655 final project — Victor Superales — October 31, 2026.
+CS655 final project — Victor Superales — November 29, 2026.
 
 Compares Linear Regression, Random Forest and LSTM for NASA C-MAPSS FD001
 remaining useful life (RUL), with current-only/history ablations. The report
