@@ -1,0 +1,1 @@
+{"split_seed":42,"validation_engines":20,"window":30,"cap":125,"stride":2,"training_seeds":[42,43,44],"forest_candidates":[{"n_estimators":150,"min_samples_leaf":3,"max_features":1.0},{"n_estimators":150,"min_samples_leaf":8,"max_features":0.7}],"lstm_candidates":[{"hidden":32,"lr":0.001},{"hidden":64,"lr":0.001}],"epochs":35,"patience":7,"batch":256}
