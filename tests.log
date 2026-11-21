@@ -1,0 +1,9 @@
+test_causality_and_padding (test_pipeline.PipelineTests.test_causality_and_padding) ... ok
+test_counts_labels (test_pipeline.PipelineTests.test_counts_labels) ... ok
+test_engine_split (test_pipeline.PipelineTests.test_engine_split) ... ok
+test_features_and_metrics (test_pipeline.PipelineTests.test_features_and_metrics) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.346s
+
+OK

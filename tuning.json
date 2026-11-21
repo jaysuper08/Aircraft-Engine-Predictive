@@ -1,0 +1,74 @@
+{
+  "candidates": [
+    {
+      "model": "RF_current",
+      "params": {
+        "n_estimators": 150,
+        "min_samples_leaf": 3,
+        "max_features": 1.0
+      },
+      "val_rmse": 19.7008045104285
+    },
+    {
+      "model": "RF_current",
+      "params": {
+        "n_estimators": 150,
+        "min_samples_leaf": 8,
+        "max_features": 0.7
+      },
+      "val_rmse": 20.390597077338814
+    },
+    {
+      "model": "RF_history",
+      "params": {
+        "n_estimators": 150,
+        "min_samples_leaf": 3,
+        "max_features": 1.0
+      },
+      "val_rmse": 17.21973969599355
+    },
+    {
+      "model": "RF_history",
+      "params": {
+        "n_estimators": 150,
+        "min_samples_leaf": 8,
+        "max_features": 0.7
+      },
+      "val_rmse": 16.830424585917235
+    },
+    {
+      "model": "LSTM",
+      "params": {
+        "hidden": 32,
+        "lr": 0.001
+      },
+      "val_rmse": 13.032240867614746,
+      "best_epoch": 25
+    },
+    {
+      "model": "LSTM",
+      "params": {
+        "hidden": 64,
+        "lr": 0.001
+      },
+      "val_rmse": 12.287725448608398,
+      "best_epoch": 19
+    }
+  ],
+  "selected": {
+    "RF_current": {
+      "n_estimators": 150,
+      "min_samples_leaf": 3,
+      "max_features": 1.0
+    },
+    "RF_history": {
+      "n_estimators": 150,
+      "min_samples_leaf": 8,
+      "max_features": 0.7
+    },
+    "LSTM": {
+      "hidden": 64,
+      "lr": 0.001
+    }
+  }
+}
