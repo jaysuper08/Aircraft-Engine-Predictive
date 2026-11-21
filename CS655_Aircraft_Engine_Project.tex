@@ -1,0 +1,226 @@
+\documentclass[11pt]{article}
+\usepackage[margin=0.82in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern,amsmath,amssymb,booktabs,longtable,graphicx,float,microtype,xcolor,fancyhdr}
+\usepackage[hidelinks]{hyperref}
+\definecolor{navy}{RGB}{24,65,91}
+\hypersetup{colorlinks=true,urlcolor=navy,linkcolor=navy,citecolor=navy}
+\pagestyle{fancy}\fancyhf{}\fancyhead[L]{\small CS655 | Aircraft Engine Predictive Maintenance}\fancyhead[R]{\small Victor Superales}\fancyfoot[C]{\thepage}
+\setlength{\headheight}{14pt}\setlength{\parskip}{5pt}\setlength{\parindent}{0pt}
+\newcommand{\RUL}{\operatorname{RUL}}
+\begin{document}
+\begin{titlepage}
+\vspace*{1in}
+{\color{navy}\Huge\bfseries Aircraft Engine\\[8pt] Predictive Maintenance\par}
+\vspace{0.35in}
+{\Large Comparing Linear Regression, Random Forest,\\and LSTM for Remaining Useful Life Prediction\par}
+\vspace{0.65in}
+{\large Victor Superales\\CS655 Final Project\\October 31, 2026\par}
+\vspace{0.6in}
+\textbf{Dataset:} NASA C-MAPSS, FD001\\
+\textbf{Study type:} Reproducible supervised regression benchmark\\
+\textbf{Evidence:} Executed experiments, saved predictions and fitted models
+\vfill
+\textbf{Scope statement.} All reported experimental scores were computed from the accompanying code and NASA files. These data are simulated; the project does not validate a maintenance decision system for operational aircraft. The code package is ready for GitHub upload but has not been published to a GitHub account.
+\end{titlepage}
+\section*{Abstract}
+This study estimates remaining useful life (RUL) from simulated turbofan sensor measurements using NASA C-MAPSS FD001. The experiment compares ordinary least squares Linear Regression, Random Forest Regression, and a Long Short-Term Memory (LSTM) neural network. Eighty complete engines are used for training and twenty different engines for validation; the original one-hundred-engine test set is reserved for final evaluation. Features use only current and previous sensor values. The target is capped at 125 cycles, and errors against the original uncapped labels are also reported. In the predesignated seed-42 comparison, Linear Regression, Random Forest and LSTM obtain capped-target test RMSE values of 15.50, 12.54 and 14.32 cycles, respectively. Random Forest achieves the lowest RMSE in this experiment. Current-only ablations, repeated stochastic runs, bootstrap intervals and near-failure analysis investigate where improvements arise and where predictions remain unreliable. The findings support a measured comparison of temporal information, nonlinear learning and model complexity, rather than a presumption that deep learning must outperform simpler models.
+\section{Introduction}
+Aircraft engine maintenance involves decisions under uncertainty: equipment may continue to operate while internal degradation develops. Sensor-based RUL estimation aims to summarize evidence about degradation as the expected number of cycles until the dataset's defined failure point. An accurate estimate could support planning, but predictive error alone does not establish operational safety, economic savings or regulatory suitability.
+
+The research question is: \textit{How do Linear Regression, Random Forest and LSTM compare on unseen engines, and how much does recent sensor history improve prediction?} FD001 is an appropriate controlled starting point because its single operating condition and single high-pressure-compressor degradation mode reduce the number of confounding regimes \cite{nasa,saxena}. This study is about the NASA simulation benchmark, not proprietary data from Boeing, Lockheed Martin or another manufacturer.
+
+The contribution is an auditable pipeline connecting a theoretical comparison to a leakage-controlled experiment. Linear Regression tests whether an additive mapping is sufficient; Random Forest tests nonlinear threshold interactions; LSTM tests whether learning a sequential representation adds value beyond hand-engineered summaries. The additional current-only experiments are ablations, not additional independent model families. The three families, rather than minor parameter changes, satisfy the meaningful comparison requirement.
+\section{Preliminary Concepts}
+For engine $i$, let $T_i$ denote its final recorded training cycle, $t$ its current cycle and $\mathbf{x}_{i,t}\in\mathbb R^d$ its retained sensor vector. The original training response is $r_{i,t}=T_i-t$, and the modeled response is
+\begin{equation}
+ y_{i,t}=\min(r_{i,t},125).
+\end{equation}
+The cap encodes the assumption that very early-life sensor readings may not identify exact distant failure time. It changes the estimand: the model predicts capped remaining cycles rather than unrestricted lifetime. It is a fixed study choice, not a value tuned on test scores. No alternative caps are investigated, so robustness to the cap is unknown.
+
+Under squared loss, the population-optimal prediction is the conditional mean $\mathbb{E}[Y\mid X]$. MAE instead favors a conditional median. Consequently, models can rank differently under MAE and RMSE. A model may reduce average absolute error while retaining a few large errors that dominate RMSE. Overlapping windows create dependence within an engine; the engine, not the individual row, is the unit for splitting and test uncertainty estimation.
+
+Standardization uses $z_{j}=(x_j-\mu_j)/s_j$, with means and standard deviations fitted only to training-engine observations. This improves scale comparability and neural optimization. It does not remove correlations between sensors or establish that the validation and test distributions match training.
+\section{Data and Exploratory Analysis}
+\subsection{Source, structure and integrity}
+The files were obtained from the archive linked by NASA's Prognostics Center of Excellence repository \cite{nasa}. The archive includes the original README and the simulation paper \cite{saxena}. FD001 contains 100 run-to-failure training trajectories with 20,631 rows, plus 100 censored test trajectories with 13,096 rows. A separate file supplies the remaining cycles after the final observation of each test engine. Each row has 26 fields: engine ID, cycle index, three operational settings and 21 sensor values. There are no missing numeric fields or duplicate engine-cycle pairs in the loaded FD001 files.
+
+Training and test engine IDs both run from 1 to 100, but identify distinct engines in their respective partitions. They must not be joined as if a matching number indicated the same physical engine. SHA-256 hashes of all three FD001 files are recorded in the experiment manifest.
+
+\subsection{Preprocessing and representation}
+The 100 training engines are permuted with NumPy seed 42; the first 20 are assigned to validation and the other 80 to training. All training windows are built after this division. A sensor is retained if its training-only sample standard deviation exceeds $10^{-8}$. This retains 15 sensors: s2, s3, s4, s6, s7, s8, s9, s11, s12, s13, s14, s15, s17, s20, s21. This rule includes nearly constant sensors when their variation is nonzero; it is not a claim that every retained channel is useful. Operating settings and cycle index are not predictors in this controlled FD001 study. Engine identifiers are also excluded.
+
+The scaler is fitted to all rows of the 80 training engines, not to the validation or test files. A trailing 30-cycle window is constructed for each training endpoint at stride 2, yielding 8,409 examples. For histories shorter than 30 cycles, the earliest observed reading is repeated on the left. This is causal padding, though it introduces artificial early plateaus. LSTM receives the full $30\times d$ sequence. Linear and forest models receive either the final reading or four summaries per sensor: final value, window mean, standard deviation and least-squares slope, totaling $4d$ features.
+
+\begin{figure}[H]\centering
+\includegraphics[width=\linewidth]{../results/figures/eda.pdf}
+\caption{Observed training lifetime distribution and illustrative sensor trajectories. Sensor 11 curves show a trailing 10-cycle mean for visualization only; this smoother is not an additional training preprocessing step.}
+\end{figure}
+\subsection{Censoring and limitations}
+A fixed seed-2026 random endpoint between approximately 35\% and 90\% of each validation engine's complete lifetime is used to simulate censoring. RUL at that endpoint still uses the engine's actual complete training lifetime. Only the prefix is supplied to models. This uses held-out lifetime information to construct a validation sampling scheme, not to construct predictive features. Its censoring distribution may differ from NASA's test truncation process. Each test engine contributes only its final observed window, so a long engine does not receive greater evaluation weight.
+\section{Methodology}
+\subsection{Linear Regression}
+For summary vector $\boldsymbol\phi$ and intercept $b$, ordinary least squares solves
+\begin{equation}
+ (\hat{\boldsymbol\beta},\hat b)=\arg\min_{\boldsymbol\beta,b}\sum_{k=1}^{N}(y_k-b-\boldsymbol\phi_k^\top\boldsymbol\beta)^2.
+\end{equation}
+The fitted response is additive and linear in its inputs, even though those inputs may be window summaries. The implementation uses scikit-learn's dense least-squares solver, not gradient descent \cite{sklearnlinear}. A numerical least-squares solution avoids explicitly inverting $X^TX$, which can be unstable under correlated sensors. There is no penalty or hyperparameter search for this baseline.
+
+Linearity is a restriction on the conditional response. Homoscedastic independent errors and full-rank designs are additional classical conditions for familiar coefficient-inference formulas; this study does not claim such formulas apply to correlated engine windows. Collinearity can make individual coefficients unstable even when predictions are usable. This model provides a transparent baseline with fast fitting; residual plots test whether an additive mapping misses systematic structure.
+\subsection{Random Forest Regression}
+A regression tree partitions feature space into terminal regions and predicts a region's mean training response. A candidate split minimizes the weighted within-child squared error. A forest averages $B$ trees:
+\begin{equation}
+ \hat f(\boldsymbol\phi)=\frac{1}{B}\sum_{b=1}^{B}h_b(\boldsymbol\phi).
+\end{equation}
+Each tree uses a bootstrap sample of training windows and randomized candidate features \cite{breiman,sklearnrf}. Individual trees can have high variance. Averaging can reduce it when their errors are not perfectly correlated; correlated sensors and overlapping windows limit that benefit. Tree splits naturally represent nonlinear effects and feature interactions without requiring a linear response.
+
+Two configurations are compared per feature representation, each with 150 trees: (minimum leaf size 3, all features eligible per split), and (minimum leaf size 8, 70\% of features eligible). Other settings use the library defaults, including squared-error splitting and bootstrap sampling. Larger leaves smooth predictions; fewer candidate features can decorrelate trees. The seed-42 configuration is chosen by validation endpoint RMSE. Window-level bootstrap does not make training windows independent; engine-separated evaluation remains essential.
+
+Forest feature importances describe the accumulated reduction in impurity. They can distribute importance unpredictably across correlated features and favor some variable structures. They are descriptive diagnostics, not causal explanations or proof of sensor necessity.
+\subsection{LSTM Neural Network}
+The modern LSTM cell used here maintains a cell state $c_t$ and hidden state $h_t$. With concatenation $[h_{t-1},x_t]$, its gates are
+\begin{align}
+ i_t&=\sigma(W_i[h_{t-1},x_t]+b_i), & f_t&=\sigma(W_f[h_{t-1},x_t]+b_f),\\
+ g_t&=\tanh(W_g[h_{t-1},x_t]+b_g), & o_t&=\sigma(W_o[h_{t-1},x_t]+b_o),\\
+ c_t&=f_t\odot c_{t-1}+i_t\odot g_t, & h_t&=o_t\odot\tanh(c_t).
+\end{align}
+Here $\sigma$ is the logistic function and $\odot$ is elementwise multiplication. Gates control how information is retained, incorporated and exposed. The additive cell-state path can help preserve gradients relative to an ordinary recurrent network, but does not guarantee that long-term dependencies will be learned \cite{lstm,pytorchlstm}.
+
+The validation-selected LSTM uses 64 hidden units; its seed-42 checkpoint is from epoch 19. The selected forest-history configuration uses leaf size 8 and feature fraction 0.7.
+
+A single unidirectional LSTM layer processes each standardized window, followed by one linear output from its last hidden state. Hidden and cell states are reset for every window; no hidden state is carried from one engine to another. The two candidates have 32 or 64 hidden units, both with Adam learning rate $10^{-3}$, batch size 256 and weight decay $10^{-5}$. Targets are divided by 125 during optimization, so the loss is
+\begin{equation}
+ \mathcal L(\theta)=\frac{1}{N}\sum_k\left(\hat u_\theta(X_k)-y_k/125\right)^2.
+\end{equation}
+Predictions are multiplied by 125 afterward. Adam adapts parameter update scales using moving estimates of gradients and squared gradients \cite{adam}. Gradients are computed through the 30-step unrolled sequence using backpropagation through time, and their norm is clipped at 1.0. Training lasts at most 35 epochs, with early stopping after seven epochs without improved validation endpoint RMSE. The best checkpoint is restored. There is no dropout, attention mechanism, bidirectional processing or pretrained network.
+
+An LSTM can learn time-sensitive degradation patterns directly, but requires more computation and introduces nonconvex optimization and initialization variability. Its finite 30-cycle input cannot recover information never present in the sensors. All models' final predictions are clipped to $[0,125]$; this bounds the modeled response and is used for validation as well as test scoring.
+\section{Experiments and Evaluation}
+\subsection{Controlled protocol}
+All representations use the same training engines, validation engines, training endpoints, target cap and causal window length. The seed-42 run is the predesignated main comparison. Selected forest-history and LSTM configurations are repeated with seeds 43 and 44; seed choice is not optimized using test outcomes. The selected checkpoint within each LSTM run is still chosen on validation. No model is refitted on the 20 validation engines, so every delivered model remains trained on 80 engines.
+
+Test predictions are computed after each model configuration has been selected using validation. The pipeline does not use test scores to change hyperparameters, stop training or select a preferred random seed. Current-only and history variants share the linear family or forest family, respectively. The LSTM comparison evaluates both a different architecture and a different temporal representation; it does not isolate architecture alone.
+
+\subsection{Metrics and uncertainty}
+For one endpoint per test engine, $e_i=\hat y_i-y_i$, the primary metrics are
+\begin{equation}
+ \operatorname{MAE}=\frac{1}{n}\sum_i|e_i|,\qquad
+ \operatorname{RMSE}=\sqrt{\frac{1}{n}\sum_i e_i^2},\qquad
+ \operatorname{Bias}=\frac{1}{n}\sum_i e_i.
+\end{equation}
+Positive bias indicates average overestimation of remaining cycles. Overestimation percentage counts $e_i>0$ and measures frequency, not severity. Near-failure MAE uses only engines whose original true RUL is at most 30 cycles. There are 25 such engines in this test file. Primary scores compare to $\min(r_i,125)$; separate raw scores compare identical predictions with the unmodified official $r_i$. The latter penalize the cap when the official answer exceeds 125.
+
+A 95\% percentile bootstrap interval for RMSE is generated using 2,000 samples of the 100 engine endpoints, seed 2026. This interval is conditional on one fitted model and this test population. It does not include uncertainty from the single training/validation split or simulation-to-real transfer. Three training seeds provide a separate, limited measure of algorithmic variability; they do not constitute three independent datasets. Fit time includes the selected model's training and, for LSTM, its validation/checkpoint loop, but excludes data preparation and rejected candidates. It is an approximate computational comparison, not full pipeline latency.
+\subsection{Validation selection}
+\begin{table}[H]\centering\small
+\begin{tabular}{llr}\toprule
+Model & Candidate & Validation RMSE \\\midrule
+RF\_current & leaf 3, features 1.0 & 19.70 \\
+RF\_current & leaf 8, features 0.7 & 20.39 \\
+RF\_history & leaf 3, features 1.0 & 17.22 \\
+RF\_history & leaf 8, features 0.7 & 16.83 \\
+LSTM & hidden 32, lr 0.001 & 13.03 \\
+LSTM & hidden 64, lr 0.001 & 12.29 \\
+\bottomrule\end{tabular}
+\caption{All searched candidates, seed 42. Selection uses only the 20 validation endpoints.}
+\end{table}
+Small candidate sets keep the study reproducible, but are not exhaustive searches. The single validation sample is too small to guarantee stable rankings. The configuration file and tuning JSON contain all candidate settings and selected values.
+\section{Results}
+\begin{table}[H]\centering\small
+\begin{tabular}{lrrrrr}\toprule
+Model, seed 42 & Val. RMSE & Test MAE & Test RMSE & Raw RMSE & Fit s \\\midrule
+Linear Regression & 18.57 & 12.52 & 15.50 & 16.70 & 0.042 \\
+Random Forest & 16.83 & 9.81 & 12.54 & 13.79 & 12.191 \\
+LSTM & 12.29 & 10.48 & 14.32 & 15.51 & 14.024 \\
+\bottomrule\end{tabular}
+\caption{Main comparison. RUL errors are in cycles; raw RMSE uses uncapped official labels. Linear and forest rows use history summaries.}
+\end{table}
+\begin{figure}[H]\centering\includegraphics[width=\linewidth]{../results/figures/comparison.pdf}
+\caption{Measured capped-target errors and engine-endpoint predictions. The diagonal is perfect agreement. Predictions at 125 reflect the cap and clipping, not evidence of a true lifetime of exactly 125 cycles.}
+\end{figure}
+\begin{table}[H]\centering\small
+\begin{tabular}{lrrr}\toprule
+Model & RMSE 95\% bootstrap interval & Bias & Overestimates (\%) \\\midrule
+Linear Regression & [13.43, 17.76] & 3.45 & 56 \\
+Random Forest & [10.78, 14.39] & 3.21 & 63 \\
+LSTM & [11.91, 16.75] & 0.38 & 55 \\
+\bottomrule\end{tabular}
+\caption{Conditional uncertainty and error direction for the main seed-42 models. Intervals are not a complete model uncertainty analysis.}
+\end{table}
+The smallest capped-target RMSE is 12.54 cycles from Random Forest. Its raw-target RMSE is 13.79 cycles. This distinction matters because distant remaining lifetimes are deliberately truncated during training. A model's apparent quality should not be compared with published scores unless target handling, train/test protocol and evaluation endpoint rules match.
+\subsection{Does sensor history help?}
+\begin{table}[H]\centering\small
+\begin{tabular}{lrrr}\toprule
+Representation, seed 42 & Test MAE & Test RMSE & Near-failure MAE \\\midrule
+Linear\_current & 16.46 & 20.67 & 19.83 \\
+Linear\_history & 12.52 & 15.50 & 10.38 \\
+RF\_current & 11.93 & 17.04 & 10.46 \\
+RF\_history & 9.81 & 12.54 & 4.83 \\
+\bottomrule\end{tabular}
+\caption{Current readings versus causal 30-cycle summaries. Each family uses its stated validation-selected configuration.}
+\end{table}
+History reduces linear-model RMSE by 25.0\% and forest RMSE by 26.4\% relative to each family's current-only variant. This is evidence that recent behavior is useful in this protocol. It does not show that any particular summary is necessary: final value, mean, standard deviation and slope were added together. The forest ablation also reselects hyperparameters within the same fixed candidate set, so the change includes modest configuration differences as well as features.
+\subsection{Repeated runs and near-failure behavior}
+\begin{table}[H]\centering\small
+\begin{tabular}{lrrrr}\toprule
+Model & Seed & Test RMSE & Raw RMSE & Near-failure MAE \\\midrule
+RF\_history & 42 & 12.54 & 13.79 & 4.83 \\
+RF\_history & 43 & 12.60 & 13.80 & 5.01 \\
+RF\_history & 44 & 12.58 & 13.77 & 4.84 \\
+LSTM & 42 & 14.32 & 15.51 & 3.22 \\
+LSTM & 43 & 14.63 & 16.00 & 3.09 \\
+LSTM & 44 & 14.26 & 15.84 & 4.83 \\
+\bottomrule\end{tabular}
+\caption{Fixed selected configurations across three seeds. Near-failure subset: 25 engines, true remaining life $\leq30$ cycles.}
+\end{table}
+Across seeds, forest-history test RMSE has mean 12.58 and sample standard deviation 0.03 cycles; LSTM has mean 14.40 and sample standard deviation 0.20 cycles. These summarize training randomness conditional on the same data split. Near-failure results should be interpreted cautiously because only 25 engines contribute and errors do not directly specify a maintenance action threshold.
+\section{Discussion}
+\subsection{Interpretation and theoretical connections}
+The forest-history model outperforms both the linear-history model and LSTM in the predesignated comparison. This is consistent with nonlinear interactions and well-chosen causal summaries being sufficient for this small controlled dataset. It does not imply that recurrent models cannot perform better with different data, windows or tuning.
+
+Although LSTM has the lowest validation RMSE, Random Forest has the lowest test RMSE. This reversal illustrates why a small validation sample cannot guarantee the same ranking on new engines. The seed-42 LSTM has near-failure MAE of 3.22 cycles, compared with 4.83 for Random Forest and 10.38 for Linear Regression, so the model preferred on overall RMSE is not best on every subset.
+
+The linear-history comparison shows that temporal summaries can improve a simple model substantially. Window means suppress some sensor noise while slopes encode recent direction of change. This is a plausible explanation, not a separate causal test of each summary. Forests can combine sensor thresholds and nonlinear interactions. LSTM instead must learn an effective summary from sequences while also optimizing a nonlinear predictor; the resulting flexibility is useful only if the data and training procedure support it.
+
+A paired bootstrap of the seed-42 test engines gives a forest-minus-LSTM RMSE difference of -1.78 cycles, with a 95\% percentile interval of [-3.43, -0.10]. Negative values favor the forest. The interval excludes zero for this conditional comparison. Even an interval excluding zero would apply only to these fitted models and this test distribution, not establish universal superiority.
+\begin{figure}[H]\centering\includegraphics[width=\linewidth]{../results/figures/diagnostics.pdf}
+\caption{Residuals and selected LSTM learning trajectory. Training loss uses all selected training windows while validation uses one censored endpoint per engine; their RMSE levels are not directly comparable generalization-gap estimates.}
+\end{figure}
+\subsection{Overfitting and failure modes}
+Early stopping and tree leaf-size constraints reduce some opportunities to overfit. They do not prove overfitting is absent. Overlapping training windows and the small number of validation engines can make model selection fragile. The learning curve should be assessed for validation improvement or deterioration, not simply a low training loss. Because the training and validation sampling units differ, a train-validation gap alone does not quantify overfitting.
+
+Positive errors are especially relevant when a planner might assume an engine has longer to operate than it actually does. Mean bias and overestimation frequency are useful descriptive measures, but neither implements a safety-oriented asymmetric cost. A rare large positive error can matter more than many small negative errors. This study uses symmetric training loss and does not evaluate a certified operating policy.
+\begin{figure}[H]\centering\includegraphics[width=0.85\linewidth]{../results/figures/importance.pdf}
+\caption{Ten largest impurity-based importances for the seed-42 forest. Correlated summaries can share importance. These values are not causal effects.}
+\end{figure}
+\subsection{Limitations and improvements}
+The most important limitation is the simulated, single-condition, single-fault dataset. Real fleets can have environmental variation, sensor failure, changing maintenance practices and multiple degradation mechanisms absent from FD001. Test accuracy cannot be translated into dollar savings or a claim of safe deployment.
+
+The study uses one engine split, a small candidate search and only three stochastic seeds. The validation censoring scheme is constructed from fractional complete lifetimes, which need not match real observation processes. The fixed 125-cycle cap and 30-cycle window were not varied. Results could change under other caps, horizons, validation splits or sensor choices. Longer engines contribute more training windows, so training is not engine-balanced even though testing is.
+
+A stronger follow-up would use repeated group splits or nested group cross-validation for selection, then preserve a genuinely untouched test set; evaluate FD002--FD004 and external data; compare uncapped-target training; and test window-length and sensor-summary ablations. Uncertainty calibration, asymmetric loss and decision-cost evaluation would be needed before interpreting predictions as maintenance recommendations. Paired model comparisons and permutation importance on validation data would strengthen the analysis beyond impurity importance alone.
+\section{Conclusion}
+The research question can be answered within the study's stated boundaries: Random Forest has the lowest capped-target seed-42 test RMSE among the three families, and causal sensor-history summaries improve both the linear and forest baselines. The measured results show that useful temporal information does not require a recurrent architecture; model complexity must be justified empirically. The conclusion is a benchmark finding, not proof that one family is universally best or ready for flight-critical use.
+\section{Reproducibility and Code Organization}
+The supplied code separates loading/window construction, model definitions, training/configuration, evaluation, inference and visualization. Scikit-learn estimators and the custom LSTM wrapper expose a consistent fit/predict pattern, while the wrapper explicitly accepts validation arrays for early stopping. Models, scaler, predictions, candidate scores, random seeds, file hashes and library versions are saved. Tests verify exact FD001 row counts, target construction, causal windows, padding, feature slopes, basic metric values and disjoint engine splits. A separate verification recomputes metrics from saved predictions and checks inference against the saved forest output.
+
+Python 3.12.14, NumPy 2.3.5, pandas 2.2.3, scikit-learn 1.8.0 and PyTorch 2.15.0+cpu were used on Linux x86-64 with CPU execution and two threads for tree/LSTM training. Exact direct dependency versions are in \texttt{requirements-lock.txt}; compatible ranges are in \texttt{requirements.txt}. Numeric equality across hardware or library releases is not guaranteed. Figures and result tables can be regenerated; the README contains commands and GitHub publication instructions. A hosted repository URL must be added after the project is uploaded to the student's account.
+
+\textbf{Assistance disclosure.} Project-specific code, analysis and writing were prepared with AI assistance. The experiments were executed on the supplied NASA files. The student should review the methods, reproduce the results and follow the instructor's rules for disclosing assistance.
+\clearpage
+\begin{thebibliography}{99}\small
+\bibitem{nasa} A. Saxena and K. Goebel (2008). \textit{Turbofan Engine Degradation Simulation Data Set}. NASA Ames Prognostics Data Repository. Original FD001 data and README. \url{https://www.nasa.gov/intelligent-systems-division/discovery-and-systems-health/pcoe/pcoe-data-set-repository/}. Accessed October 31, 2026.
+\bibitem{saxena} A. Saxena, K. Goebel, D. Simon and N. Eklund (2008). Damage Propagation Modeling for Aircraft Engine Run-to-Failure Simulation. \textit{International Conference on Prognostics and Health Management}, pp. 1--9. \url{https://doi.org/10.1109/PHM.2008.4711414}. Original paper also supplied in NASA's downloaded archive.
+\bibitem{breiman} L. Breiman (2001). Random Forests. \textit{Machine Learning}, 45, 5--32. \url{https://doi.org/10.1023/A:1010933404324}.
+\bibitem{lstm} S. Hochreiter and J. Schmidhuber (1997). Long Short-Term Memory. \textit{Neural Computation}, 9(8), 1735--1780. \url{https://doi.org/10.1162/neco.1997.9.8.1735}. The implementation uses the modern forget-gate formulation documented by PyTorch.
+\bibitem{adam} D. P. Kingma and J. Ba (2015). Adam: A Method for Stochastic Optimization. \textit{ICLR}. \url{https://arxiv.org/abs/1412.6980}.
+\bibitem{sklearn} F. Pedregosa et al. (2011). Scikit-learn: Machine Learning in Python. \textit{Journal of Machine Learning Research}, 12, 2825--2830. \url{https://jmlr.org/papers/v12/pedregosa11a.html}.
+\bibitem{sklearnlinear} Scikit-learn developers. \textit{LinearRegression API documentation}. \url{https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LinearRegression.html}. Accessed October 31, 2026.
+\bibitem{sklearnrf} Scikit-learn developers. \textit{RandomForestRegressor API documentation}. \url{https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.RandomForestRegressor.html}. Accessed October 31, 2026.
+\bibitem{pytorch} A. Paszke et al. (2019). PyTorch: An Imperative Style, High-Performance Deep Learning Library. \textit{NeurIPS}, 32. \url{https://arxiv.org/abs/1912.01703}.
+\bibitem{pytorchlstm} PyTorch contributors. \textit{LSTM API documentation}. \url{https://docs.pytorch.org/docs/stable/generated/torch.nn.LSTM.html}. Accessed October 31, 2026.
+\bibitem{numpy} C. R. Harris et al. (2020). Array programming with NumPy. \textit{Nature}, 585, 357--362. \url{https://doi.org/10.1038/s41586-020-2649-2}.
+\bibitem{pandas} W. McKinney (2010). Data Structures for Statistical Computing in Python. \textit{Proceedings of the 9th Python in Science Conference}, 56--61. \url{https://doi.org/10.25080/Majora-92bf1922-00a}.
+\bibitem{matplotlib} J. D. Hunter (2007). Matplotlib: A 2D Graphics Environment. \textit{Computing in Science \& Engineering}, 9(3), 90--95. \url{https://doi.org/10.1109/MCSE.2007.55}.
+\end{thebibliography}
+\end{document}
